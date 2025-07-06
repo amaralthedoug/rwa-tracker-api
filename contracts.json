@@ -1,0 +1,14 @@
+[
+  {
+    "address": "0x2953399124F0cBB46d2CbACD8A89cF0599974963",
+    "name": "OpenSea Shared Storefront",
+    "symbol": "OPENSTORE",
+    "chain": "Polygon",
+    "metadata": {
+      "assetType": "Marketplace Mint",
+      "location": "Global",
+      "fractionSize": "1/1",
+      "issuer": "OpenSea"
+    }
+  }
+]
