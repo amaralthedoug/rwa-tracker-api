@@ -37,7 +37,7 @@ async function fetchAndFilterNFTs() {
 
     for (const contract of rwaContracts) {
       const response = await alchemy.nft.getNftsForContract(contract.address);
-      const filtered = response.nfts.filter((nft) =>
+      const filtered = response.nfts.filter((nft: any) =>
         nft.rawMetadata?.assetType === 'Imóvel'
       );
 
@@ -53,9 +53,9 @@ async function fetchAndFilterNFTs() {
         address: r.contract.address,
         total: r.nfts.length,
         samples: r.nfts.map((n) => ({
-          name: n.title,
+          name: n.name,
           id: n.tokenId,
-          metadata: n.rawMetadata,
+          metadata: n.raw,
         })),
       })),
       { depth: null }

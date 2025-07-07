@@ -1,99 +1,101 @@
 import { ethers } from "ethers";
-import * as fs from "fs";
-import * as path from "path";
 import dotenv from "dotenv";
 
-dotenv.config(); // Garante que as variáveis .env sejam carregadas
+dotenv.config();
 
-// Tipagem para os contratos RWA
-interface ContractInfo {
-  address: string;
-  name: string;
-  symbol: string;
-  chain: string;
-  metadata?: any;
-}
+const provider = new ethers.JsonRpcProvider(process.env.POLYGON_RPC_URL);
 
-// Garante que a RPC_URL está presente
-if (!process.env.RPC_URL) {
-  throw new Error("RPC_URL não definida no .env");
-}
-
-console.log("Conectando à RPC_URL:", process.env.RPC_URL); // Debug opcional
-
-const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-
-// Caminho absoluto do arquivo contracts.json
-const contractsPath = path.resolve(__dirname, "../contracts.json");
-
-let rwaContracts: ContractInfo[] = [];
-
-try {
-  const rawData = fs.readFileSync(contractsPath, "utf-8");
-  const parsed = JSON.parse(rawData);
-
-  if (Array.isArray(parsed)) {
-    rwaContracts = parsed;
-  } else if (parsed && parsed.address) {
-    rwaContracts = [parsed]; // Suporta um único contrato no arquivo
-  } else {
-    console.warn("contracts.json não é um array ou objeto válido.");
-  }
-} catch (err) {
-  console.error("Erro ao carregar contracts.json:", err);
-}
-
-const ERC721_ABI = [
-  "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+const MINIMAL_ABI = [
+  "function supportsInterface(bytes4 interfaceID) external view returns (bool)",
+  "function name() view returns (string)",
+  "function symbol() view returns (string)"
 ];
 
-// Buscar últimas transferências dos contratos RWA
+const ERC721_INTERFACE_ID = "0x80ac58cd";
+const ERC1155_INTERFACE_ID = "0xd9b67a26";
+
+// Palavras-chave associadas a RWAs reais
+const rwaKeywords = [
+  "residential",
+  "property",
+  "real estate",
+  "vehicle",
+  "art",
+  "ownership",
+  "asset",
+  "land",
+  "building",
+  "house",
+];
+
 export async function getRecentTransfers() {
-  const results: any[] = [];
-
-  if (!rwaContracts.length) {
-    console.warn("Nenhum contrato válido carregado. Retornando lista vazia.");
-    return results;
-  }
-
   const latestBlock = await provider.getBlockNumber();
-  const fromBlock = latestBlock - 5000;
+  const blocksToCheck = 150; // Últimos blocos (~5 minutos)
+  const fromBlock = latestBlock - blocksToCheck;
+  const toBlock = latestBlock;
 
-  for (const contractInfo of rwaContracts) {
+  console.log(`🔎 Buscando contratos entre blocos ${fromBlock} e ${toBlock}...`);
+
+  const events = await provider.getLogs({
+    fromBlock,
+    toBlock,
+    topics: [
+      ethers.id("ContractCreated(address,address,string,string,uint256)").slice(0, 66)
+    ]
+  });
+
+  const creations: any[] = [];
+
+  for (let i = 0; i < events.length; i++) {
+    const log = events[i];
+    const address = log.address;
+
+    console.log(`🔍 Verificando contrato ${address}`);
+
     try {
-      const contract = new ethers.Contract(contractInfo.address, ERC721_ABI, provider);
+      const contract = new ethers.Contract(address, MINIMAL_ABI, provider);
 
-      const events = await contract.queryFilter(
-        contract.filters.Transfer(),
-        fromBlock,
-        latestBlock
-      );
+      const [is721, is1155] = await Promise.all([
+        contract.supportsInterface(ERC721_INTERFACE_ID).catch(() => false),
+        contract.supportsInterface(ERC1155_INTERFACE_ID).catch(() => false),
+      ]);
 
-      const enriched = events
-        .filter((event): event is ethers.EventLog => "args" in event)
-        .map((event) => {
-          const from = event.args?.from;
-          const to = event.args?.to;
+      if (!is721 && !is1155) {
+        console.log(`❌ ${address} não é ERC721 nem ERC1155`);
+        continue;
+      }
 
-          return {
-            token: contractInfo.address,
-            collectionName: contractInfo.name,
-            symbol: contractInfo.symbol,
-            lastTxHash: event.transactionHash,
-            timestamp: new Date().toISOString(),
-            from,
-            to,
-            chain: contractInfo.chain,
-            estimatedValueUSD: 1450.0,
-            metadata: contractInfo.metadata,
-          };
+      const [name, symbol] = await Promise.all([
+        contract.name().catch(() => "Unknown"),
+        contract.symbol().catch(() => "UNK")
+      ]);
+
+      const metadata = `${name} ${symbol}`.toLowerCase();
+      const isRWA = rwaKeywords.some(keyword => metadata.includes(keyword));
+
+      if (isRWA) {
+        console.log(`✅ RWA encontrado: ${name} (${symbol})`);
+        creations.push({
+          address,
+          standard: is721 ? "ERC721" : "ERC1155",
+          name,
+          symbol,
+          chain: "Polygon",
         });
+      } else {
+        console.log(`ℹ️ Ignorado: ${name} (${symbol}) não é RWA`);
+      }
 
-      results.push(...enriched);
+      if (creations.length >= 10) {
+        console.log("🎯 Limite de 10 contratos RWA atingido.");
+        break;
+      }
+
     } catch (err) {
-      console.error(`Erro ao processar contrato ${contractInfo.address}:`, err);
+      console.warn(`⚠️ Erro ao verificar contrato ${address}:`, err);
     }
   }
 
-  return results;
+  console.log(`📦 Total de contratos RWA retornados: ${creations.length}`);
+  return creations;
 }
